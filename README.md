@@ -1,249 +1,168 @@
 # ModelGuard
 
-**ML Drift Detection & Auto-Retraining System**
+Drift detection for ML models. Tells you when your model is seeing weird data.
 
-Monitors deployed ML models for data drift, scores severity, recommends actions, and orchestrates retraining with human oversight.
+## Why this exists
 
-```bash
-pip install -e . && modelguard init && python examples/fraud_detection_demo.py
-```
+Your fraud model worked great in January. By March, it's missing 40% of frauds. Why? The data changed. Transaction amounts shifted. New merchant categories appeared. Your model is still predicting like it's January.
 
----
+This tool watches for that. It compares production data against your training baseline and yells at you when things drift.
 
-## 10-Second Proof
+## What it actually does
 
-Using the [Kaggle Credit Card Fraud Dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud), we simulate a fraud ring attack and watch ModelGuard catch it:
+1. **Stores a baseline** - Stats from your training data (means, distributions, histograms)
+2. **Compares new data** - Runs statistical tests (KS, PSI, Chi-square) against baseline
+3. **Scores severity** - How bad is it? LOW/MEDIUM/HIGH/CRITICAL
+4. **Creates alerts** - So a human can decide what to do
+5. **Tracks decisions** - What did you do last time this happened?
 
-```
-Drift Detection Results:
-  Features drifted:  19 / 30 (63%)
-  Severity:          HIGH (0.62)
-  F1 Score drop:     0.79 → 0.18 (-77%)
-  Recommendation:    RETRAIN
-  Alert:             Created, pending human review
-```
+That's it. No magic. No "AI-powered insights." Just math.
 
-> **Note on demo data**: Original Kaggle dataset has 0.17% fraud rate. Demo uses balanced resampling (10% fraud) for faster iteration. Drift is synthetically injected to simulate a fraud ring attack. All drift statistics are real calculations.
+## What it doesn't do
 
----
+- **Won't retrain your model** - That's your job. We just tell you when.
+- **Won't deploy anything** - No k8s, no cloud integrations. It's a library.
+- **Won't detect concept drift** - That requires labels. We only see input distributions.
 
-## Features
-
-- **6 Drift Detection Methods** - KS test, Chi-square, PSI, KL divergence, Wasserstein, Jensen-Shannon
-- **Severity Scoring** - NONE → LOW → MEDIUM → HIGH → CRITICAL with explanations
-- **Action Recommender** - Rule-based: IGNORE, MONITOR, RETRAIN, ROLLBACK
-- **Human-in-the-Loop** - Alerts require approval before action
-- **Scheduled Monitoring** - Cron/interval-based drift checks
-- **CLI & REST API** - Full control via both interfaces
-
----
-
-## What's Real vs Simulated
-
-| Component | Status |
-|-----------|--------|
-| Drift detection (KS, PSI, etc.) | **Real** - actual statistical tests |
-| Severity scoring | **Real** - configurable formula |
-| Alert management | **Real** - persisted to SQLite |
-| Scheduled jobs | **Real** - APScheduler with persistence |
-| Retraining pipeline | **Simulated** - orchestration stubs, bring your own trainer |
-| Canary deployment | **Simulated** - versioned registry, no real traffic splitting |
-| Auto-rollback | **Simulated** - version pointer swap |
-
-Deployment integration is designed to be extensible. Plug in your own training scripts and serving infrastructure.
-
----
-
-## Quick Start
+## Install
 
 ```bash
-# Install
 pip install -e .
-
-# Initialize (creates config + SQLite DB)
 modelguard init
+```
 
-# Run the fraud detection demo
+## Quick demo
+
+```bash
 python examples/fraud_detection_demo.py
-
-# Or use CLI
-modelguard model register "my-model" --type classification
-modelguard baseline create <model-id> training_data.csv
-modelguard drift check <baseline-id> production_data.csv
-modelguard alert list
 ```
 
----
+Uses synthetic data based on the [Kaggle Credit Card Fraud dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud). We inject fake drift (simulate a fraud ring attack) and watch the system catch it.
 
-## Demo Output (Full)
-
+Output:
 ```
-======================================================================
-  CREDIT CARD FRAUD DETECTION - DRIFT MONITORING DEMO
-======================================================================
-Dataset: Kaggle Credit Card Fraud (balanced resample, 10% fraud rate)
-Features: 30 (V1-V28 PCA + Time + Amount)
-
-Phase 1: Model Training
-  Training samples: 2,800
-  Validation F1 (fraud class): 0.79
-
-Phase 3: Simulated Drift (Fraud Ring Attack)
-  - Transaction amounts surged 600%
-  - 18+ PCA features shifted
-  - Time patterns disrupted
-
-  Performance after drift:
-    F1 (fraud class): 0.79 → 0.18 (-77%)
-
-Phase 4: Drift Detection
-  Features with drift: 19 / 30 (63.3%)
-
-  Top drifted features:
-  Feature   KS Statistic   Drift?
-  V1        20.723         YES
-  V2        17.424         YES
-  V4        17.209         YES
-  V3        17.127         YES
-
-Phase 5: Severity
-  Score: 0.62 (HIGH)
-  Explanation: 19 of 30 features drifted. Retraining recommended.
-
-Phase 6: Recommendation
-  Action: RETRAIN
-  Confidence: 0.85
-
-Phase 8: Alert
-  ID: 811f23b9-7a76-40f4-b5ec-9d0aa51031bf
-  Severity: HIGH
-  Status: pending
-
-  CLI: modelguard alert resolve 811f23b9... retrain --user admin
-======================================================================
+Features drifted:  19 / 30 (63%)
+Severity:          HIGH
+F1 drop:           0.79 → 0.18
+Recommendation:    RETRAIN
 ```
 
----
+The 10% fraud rate in the demo is resampled for speed. Real Kaggle data is 0.17% fraud.
 
-## Key Concepts
-
-| Term | Definition |
-|------|------------|
-| **Baseline** | Statistical snapshot of training data distributions at deployment time. |
-| **Data Drift** | P(X) shift - input feature distributions changed. |
-| **Prediction Drift** | P(Y\|X) shift - model outputs changed. |
-| **Concept Drift** | True P(Y\|X) changed - requires labels to detect. |
-| **Model Decay** | Performance degradation from accumulated drift. |
-
----
-
-## Design Decisions
-
-### Why These Drift Tests?
-
-| Test | Best For | Why |
-|------|----------|-----|
-| **KS Test** | Continuous | Detects any shape change, low false positives |
-| **Chi-Square** | Categorical | Standard for frequency changes |
-| **PSI** | Both | Industry standard in credit risk |
-| **Wasserstein** | Continuous | Captures shift magnitude, robust to outliers |
-| **KL Divergence** | Distributions | Sensitive to tail changes |
-| **Jensen-Shannon** | Both | Symmetric, bounded [0,1] |
-
-### Severity Formula
+## Basic usage
 
 ```python
-severity = (
-    0.4 * drift_percentage +        # % of features drifted
-    0.3 * max_feature_drift +       # worst individual drift
-    0.2 * prediction_drift +        # output distribution change
-    0.1 * importance_weight         # important features affected?
+from modelguard.baseline.creator import BaselineCreator
+from modelguard.drift.detector import DriftDetector
+from modelguard.core.config import load_config
+
+config = load_config()
+
+# Save baseline from training data
+creator = BaselineCreator(config)
+baseline = creator.create(
+    model_id="my-model",
+    training_data=X_train,
+    predictions=model.predict(X_train),
 )
 
-# Thresholds
-NONE: < 0.1 | LOW: 0.1-0.3 | MEDIUM: 0.3-0.5 | HIGH: 0.5-0.8 | CRITICAL: >= 0.8
+# Later, check production data
+detector = DriftDetector(config)
+report = detector.detect(baseline, X_production)
+
+if report.data_drift_detected:
+    print(f"Drift in {report.drift_percentage:.0f}% of features")
+    print(f"Worst offenders: {report.features_with_drift[:3]}")
 ```
 
-### Guardrails
-
-| Guardrail | Purpose |
-|-----------|---------|
-| Validation Gate | New model must not degrade > 2% vs baseline |
-| Cooldown Period | Min 24h between retrains |
-| Human Approval | HIGH/CRITICAL requires human sign-off |
-| Feedback Loop | Human decisions improve future recommendations |
-
----
-
-## CLI Reference
+## CLI
 
 ```bash
-# Models
+# Register a model
 modelguard model register "fraud-detector" --type classification
-modelguard model list
 
-# Baselines
+# Create baseline from CSV
 modelguard baseline create <model-id> training_data.csv
-modelguard baseline list
 
-# Drift
+# Check new data for drift
 modelguard drift check <baseline-id> production_data.csv
 
-# Alerts
+# See what needs attention
 modelguard alert list
-modelguard alert resolve <alert-id> retrain --user admin
 
-# Scheduled Jobs
+# Mark an alert as handled
+modelguard alert resolve <alert-id> retrain --user yourname
+```
+
+## The drift tests
+
+| Test | Use for | What it catches |
+|------|---------|-----------------|
+| KS test | Continuous features | Any shape change |
+| Chi-square | Categorical features | Frequency changes |
+| PSI | Both | Industry standard, good for binned data |
+| Wasserstein | Continuous | How far distributions moved |
+
+We run KS by default. PSI if you want industry-standard reporting. The others are there if you need them.
+
+## Severity scoring
+
+```
+score = 0.4 * (% features drifted)
+      + 0.3 * (worst single feature)
+      + 0.2 * (prediction distribution shift)
+      + 0.1 * (important features affected)
+```
+
+Thresholds:
+- **LOW** (0.1-0.3): Keep an eye on it
+- **MEDIUM** (0.3-0.5): Investigate soon
+- **HIGH** (0.5-0.8): Probably need to retrain
+- **CRITICAL** (0.8+): Something broke
+
+These numbers are tunable. They're defaults that worked okay for us.
+
+## Scheduled monitoring
+
+```bash
+# Check every hour
 modelguard schedule create "hourly-check" <model-id> --interval 60
+
+# Start the background daemon
 modelguard schedule start-daemon
-
-# API Server
-modelguard server start --port 8000
 ```
 
-## API Endpoints
+Uses APScheduler. Jobs persist to SQLite so they survive restarts.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/models` | POST/GET | Register/list models |
-| `/baselines` | POST | Create baseline |
-| `/drift/check` | POST | Run drift detection |
-| `/alerts` | GET | List alerts |
-| `/alerts/{id}/resolve` | POST | Resolve alert |
-| `/jobs` | POST/GET | Create/list scheduled jobs |
+## Known limitations
 
----
+1. **No streaming** - Batch only. You give it a DataFrame, it checks it.
+2. **No label drift** - We can't detect concept drift without ground truth labels.
+3. **SQLite only** - Works fine for single-machine. Not distributed.
+4. **No model versioning integration** - Doesn't talk to MLflow/W&B/etc. Yet.
 
-## Architecture
+## Project structure
 
 ```
-Training Data ──▶ Baseline Snapshot
-                        │
-Production Data ──▶ Compare ──▶ Drift Detection
-                                      │
-                              Severity Scoring
-                                      │
-                           Action Recommendation
-                                      │
-                    ┌─────────────────┴─────────────────┐
-                    ▼                                   ▼
-              Create Alert ──▶ Human Review ──▶ Execute Action
-                                                       │
-                              ┌─────────────────────────┘
-                              ▼
-                    Retrain ──▶ Validate ──▶ Deploy
+src/modelguard/
+├── baseline/      # Captures training data stats
+├── drift/         # Statistical tests
+├── severity/      # Scoring logic
+├── actions/       # Recommendation rules
+├── human_loop/    # Alert management
+├── monitoring/    # Scheduled jobs
+├── storage/       # SQLite persistence
+├── api/           # FastAPI endpoints
+└── cli/           # Typer commands
 ```
 
----
-
-## Configuration
+## Config
 
 ```yaml
 # config/default.yaml
 drift:
-  numerical_methods: ["ks_test", "psi", "wasserstein"]
-  categorical_methods: ["chi_square", "psi", "jensen_shannon"]
+  numerical_methods: ["ks_test"]
+  categorical_methods: ["chi_square"]
   default_threshold: 0.05
 
 severity:
@@ -252,13 +171,29 @@ severity:
     medium: 0.3
     high: 0.5
     critical: 0.8
-
-retraining:
-  cooldown_hours: 24
-  max_degradation: 0.02
 ```
 
----
+## FAQ
+
+**Q: Why not use Evidently/WhyLabs/Arize?**
+
+Those are good. Use them if you need dashboards, hosted monitoring, or enterprise features. This is for when you want something simple you can read and modify.
+
+**Q: Can I use this in production?**
+
+The drift detection math is solid (it's scipy under the hood). The alert system works. But this started as a learning project, so audit the code before trusting it with anything important.
+
+**Q: Why Python only?**
+
+Because ML is Python. If you need a REST API, `modelguard server start` gives you one.
+
+## Contributing
+
+Open an issue first. PRs welcome for:
+- Bug fixes
+- New drift detection methods
+- Better documentation
+- Real-world usage examples
 
 ## License
 

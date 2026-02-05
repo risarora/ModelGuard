@@ -61,16 +61,14 @@ DATASET_PATHS = [
 
 def print_header(text: str):
     """Print a formatted header."""
-    print("\n" + "=" * 70)
+    print(f"\n{'='*60}")
     print(f"  {text}")
-    print("=" * 70)
+    print(f"{'='*60}")
 
 
 def print_section(text: str):
     """Print a section header."""
-    print(f"\n{'-' * 50}")
-    print(f"  {text}")
-    print("-" * 50)
+    print(f"\n--- {text} ---")
 
 
 def load_kaggle_creditcard_data(sample_size: int = 10000) -> tuple:
@@ -234,7 +232,7 @@ def inject_drift(df: pd.DataFrame, drift_type: str = "gradual", magnitude: float
 
 
 def main():
-    print_header("CREDIT CARD FRAUD DETECTION - DRIFT MONITORING DEMO")
+    print_header("Drift Detection Demo (Credit Card Fraud)")
     print(f"Timestamp: {datetime.now().isoformat()}")
 
     # =========================================================================
@@ -378,11 +376,8 @@ def main():
     print(f"  [+] Production samples: {len(X_prod):,}")
     print(f"  [+] Drift injected: {drift_type} (magnitude={drift_magnitude})")
 
-    print(f"\n  Simulated drift scenario: FRAUD RING ATTACK")
-    print(f"    - Transaction amounts surged {drift_magnitude*300:.0f}%")
-    print(f"    - 18+ PCA features shifted (coordinated attack pattern)")
-    print(f"    - Time patterns disrupted (off-hours transactions)")
-    print(f"    - This simulates a real-world fraud ring exploiting the model")
+    print(f"\n  Injecting drift: amounts +{drift_magnitude*300:.0f}%, shifting 18 PCA features")
+    print(f"  (simulates fraud ring attack pattern)")
 
     # Check model performance on drifted data
     prod_preds = model.predict(X_prod)
@@ -553,49 +548,21 @@ def main():
     # SUMMARY
     # =========================================================================
 
-    print_header("DEMO SUMMARY")
-
-    dataset_label = "Kaggle Credit Card Fraud" if using_real_data else "Synthetic (Kaggle format)"
+    print_header("Summary")
 
     f1_drop = val_f1 - prod_f1
     f1_drop_pct = (f1_drop / val_f1 * 100) if val_f1 > 0 else 0
 
     print(f"""
-  Dataset: {dataset_label}
-  Note: Balanced resample (10% fraud rate) for demo. Original Kaggle is 0.17%.
-  Model: creditcard_fraud_detector v1.0.0
-  ---------------------------------------------------------
+Baseline F1: {val_f1:.2f}  ->  Production F1: {prod_f1:.2f}  (dropped {f1_drop_pct:.0f}%)
+Features drifted: {len(drift_report.features_with_drift)}/{len(drift_report.feature_results)} ({drift_report.drift_percentage:.0f}%)
+Severity: {severity.level.value.upper()} ({severity.overall_score:.2f})
+Action: {recommendation.action.value.upper()}
+Alert: {"created" if alert_created else "not needed"}
 
-  BASELINE (Training Data)
-    Samples: {baseline.sample_size:,}
-    F1 (fraud class): {val_f1:.2f}
+Worst features: {', '.join(drift_report.features_with_drift[:5])}
 
-  PRODUCTION (With Simulated Drift)
-    Samples: {len(X_prod):,}
-    F1 (fraud class): {prod_f1:.2f} ({-f1_drop_pct:.0f}%)
-    Features drifted: {drift_report.drift_percentage:.0f}%
-
-  ASSESSMENT
-    Severity: {severity.level.value.upper()} ({severity.overall_score:.2f})
-    Recommended: {recommendation.action.value.upper()}
-    Urgency: {recommendation.urgency.value}
-
-  OUTCOME
-    Alert created: {"Yes" if alert_created else "No"}
-    Status: {"Pending human review" if alert_created else "Within acceptable thresholds"}
-
-  ---------------------------------------------------------
-
-  Key findings:
-  - Drift detected in {len(drift_report.features_with_drift)} features
-  - Most affected: {', '.join(drift_report.features_with_drift[:3])}
-  - F1 score dropped {f1_drop_pct:.0f}% (fraud detection degraded)
-
-  Recommended next steps:
-  1. Review the alert and drifting features
-  2. Investigate data pipeline for changes
-  3. Consider retraining with recent data
-  4. Monitor post-retrain performance
+(Data is synthetic, 10% fraud rate. Real Kaggle dataset is 0.17% fraud.)
 """)
 
     if not using_real_data:

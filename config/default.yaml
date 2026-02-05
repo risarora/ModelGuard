@@ -1,0 +1,118 @@
+# ModelGuard Default Configuration
+
+version: "1.0"
+
+# Application settings
+app:
+  name: "ModelGuard"
+  environment: "development"
+  debug: true
+  log_level: "INFO"
+
+# Database configuration
+database:
+  url: "sqlite:///./modelguard.db"
+  echo: false
+
+# Artifact storage
+artifact_storage:
+  backend: "local"
+  base_path: "./artifacts"
+
+# Baseline creation settings
+baseline:
+  statistics:
+    numerical:
+      percentiles: [1, 5, 10, 25, 50, 75, 90, 95, 99]
+      histogram_bins: 50
+    categorical:
+      max_categories: 100
+      rare_threshold: 0.01
+  retain_sample: true
+  sample_size: 10000
+
+# Monitoring configuration
+monitoring:
+  window_size_hours: 1
+  min_samples: 100
+  max_samples: 100000
+
+# Drift detection configuration
+drift:
+  methods:
+    numerical:
+      - name: "ks_test"
+        enabled: true
+        threshold: 0.05
+      - name: "psi"
+        enabled: true
+        threshold: 0.1
+        n_bins: 10
+      - name: "wasserstein"
+        enabled: true
+        threshold: 0.1
+      - name: "kl_divergence"
+        enabled: true
+        threshold: 0.1
+    categorical:
+      - name: "chi_square"
+        enabled: true
+        threshold: 0.05
+      - name: "psi"
+        enabled: true
+        threshold: 0.1
+      - name: "jensen_shannon"
+        enabled: true
+        threshold: 0.1
+  consensus:
+    strategy: "any"  # any, majority, all
+    min_agreement: 1
+
+# Severity scoring configuration
+severity:
+  feature_weights: {}
+  default_weight: 1.0
+  aggregation: "weighted_mean"  # max, mean, weighted_mean
+  thresholds:
+    none: 0.0
+    low: 0.1
+    medium: 0.3
+    high: 0.5
+    critical: 0.8
+  impact_multiplier: 1.5
+
+# Action recommendation configuration
+actions:
+  allowed_actions:
+    - "ignore"
+    - "monitor"
+    - "retrain"
+    - "rollback"
+  auto_action:
+    enabled: false
+    max_severity: "low"
+
+# Human-in-the-loop configuration
+human_loop:
+  escalation_timeout_hours: 24
+  notifications:
+    enabled: false
+
+# Retraining configuration
+retraining:
+  data:
+    lookback_days: 30
+    min_samples: 10000
+    validation_split: 0.2
+  validation:
+    required_improvement: 0.0
+    max_degradation: 0.05
+  deployment:
+    strategy: "direct"  # direct, canary
+    auto_rollback: true
+
+# API configuration
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["*"]

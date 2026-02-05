@@ -37,6 +37,7 @@ dependencies = [
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
     "structlog>=23.2",
+    "apscheduler>=3.10",
 ]
 
 [project.optional-dependencies]

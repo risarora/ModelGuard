@@ -5,7 +5,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
 
-from modelguard.cli.commands import baseline, drift, alert, model, server
+from modelguard.cli.commands import baseline, drift, alert, model, server, schedule
 
 # Create main app
 app = typer.Typer(
@@ -20,6 +20,7 @@ app.add_typer(drift.app, name="drift", help="Drift detection commands")
 app.add_typer(alert.app, name="alert", help="Alert management commands")
 app.add_typer(model.app, name="model", help="Model management commands")
 app.add_typer(server.app, name="server", help="API server commands")
+app.add_typer(schedule.app, name="schedule", help="Scheduled job management")
 
 console = Console()
 

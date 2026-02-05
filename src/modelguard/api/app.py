@@ -497,3 +497,222 @@ async def resolve_alert(alert_id: str, resolve: AlertResolve):
             raise HTTPException(status_code=404, detail="Alert not found")
 
         return {"status": "resolved", "alert_id": alert_id, "decision": resolve.decision}
+
+
+# ============== Scheduled Job Endpoints ==============
+
+class ScheduledJobCreate(BaseModel):
+    name: str
+    job_type: str = "drift_check"
+    model_id: str
+    schedule_type: str = "interval"
+    interval_minutes: Optional[int] = 60
+    cron_expression: Optional[str] = None
+    baseline_id: Optional[str] = None
+    data_source_type: Optional[str] = None
+    data_source_config: Optional[Dict[str, Any]] = None
+    notify_on_drift: bool = True
+
+
+class ScheduledJobResponse(BaseModel):
+    id: str
+    name: str
+    job_type: str
+    model_id: str
+    schedule_type: str
+    interval_minutes: Optional[int]
+    cron_expression: Optional[str]
+    is_active: bool
+    last_run_at: Optional[str]
+    next_run_at: Optional[str]
+    last_run_status: Optional[str]
+    run_count: int
+    created_at: str
+
+
+@app.post("/jobs", response_model=ScheduledJobResponse)
+async def create_scheduled_job(job: ScheduledJobCreate):
+    """Create a new scheduled monitoring job."""
+    from modelguard.storage.repositories.job_repo import ScheduledJobRepository
+    from modelguard.storage.repositories.model_repo import ModelRepository
+
+    db = get_database()
+    with db.session() as session:
+        # Verify model exists
+        model_repo = ModelRepository(session)
+        model = model_repo.get(job.model_id)
+        if not model:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        # Check for duplicate name
+        job_repo = ScheduledJobRepository(session)
+        existing = job_repo.get_by_name(job.name)
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job with name '{job.name}' already exists",
+            )
+
+        # Validate schedule
+        if job.schedule_type == "cron" and not job.cron_expression:
+            raise HTTPException(
+                status_code=400,
+                detail="cron_expression required for cron schedule type",
+            )
+
+        record = job_repo.create(
+            name=job.name,
+            job_type=job.job_type,
+            model_id=job.model_id,
+            baseline_id=job.baseline_id,
+            schedule_type=job.schedule_type,
+            interval_minutes=job.interval_minutes if job.schedule_type == "interval" else None,
+            cron_expression=job.cron_expression if job.schedule_type == "cron" else None,
+            data_source_type=job.data_source_type,
+            data_source_config=job.data_source_config,
+            notify_on_drift=job.notify_on_drift,
+            created_by="api",
+        )
+
+        return ScheduledJobResponse(
+            id=record.id,
+            name=record.name,
+            job_type=record.job_type,
+            model_id=record.model_id,
+            schedule_type=record.schedule_type,
+            interval_minutes=record.interval_minutes,
+            cron_expression=record.cron_expression,
+            is_active=record.is_active,
+            last_run_at=record.last_run_at.isoformat() if record.last_run_at else None,
+            next_run_at=record.next_run_at.isoformat() if record.next_run_at else None,
+            last_run_status=record.last_run_status,
+            run_count=record.run_count or 0,
+            created_at=record.created_at.isoformat() if record.created_at else "",
+        )
+
+
+@app.get("/jobs", response_model=List[ScheduledJobResponse])
+async def list_scheduled_jobs(
+    model_id: Optional[str] = Query(None, description="Filter by model ID"),
+    active_only: bool = Query(False, description="Only return active jobs"),
+    limit: int = Query(100, description="Maximum number of jobs"),
+):
+    """List scheduled monitoring jobs."""
+    from modelguard.storage.repositories.job_repo import ScheduledJobRepository
+
+    db = get_database()
+    with db.session() as session:
+        repo = ScheduledJobRepository(session)
+        jobs = repo.list_all(model_id=model_id, active_only=active_only, limit=limit)
+
+        return [
+            ScheduledJobResponse(
+                id=j.id,
+                name=j.name,
+                job_type=j.job_type,
+                model_id=j.model_id,
+                schedule_type=j.schedule_type,
+                interval_minutes=j.interval_minutes,
+                cron_expression=j.cron_expression,
+                is_active=j.is_active,
+                last_run_at=j.last_run_at.isoformat() if j.last_run_at else None,
+                next_run_at=j.next_run_at.isoformat() if j.next_run_at else None,
+                last_run_status=j.last_run_status,
+                run_count=j.run_count or 0,
+                created_at=j.created_at.isoformat() if j.created_at else "",
+            )
+            for j in jobs
+        ]
+
+
+@app.get("/jobs/{job_id}", response_model=ScheduledJobResponse)
+async def get_scheduled_job(job_id: str):
+    """Get a scheduled job by ID."""
+    from modelguard.storage.repositories.job_repo import ScheduledJobRepository
+
+    db = get_database()
+    with db.session() as session:
+        repo = ScheduledJobRepository(session)
+        job = repo.get(job_id)
+
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        return ScheduledJobResponse(
+            id=job.id,
+            name=job.name,
+            job_type=job.job_type,
+            model_id=job.model_id,
+            schedule_type=job.schedule_type,
+            interval_minutes=job.interval_minutes,
+            cron_expression=job.cron_expression,
+            is_active=job.is_active,
+            last_run_at=job.last_run_at.isoformat() if job.last_run_at else None,
+            next_run_at=job.next_run_at.isoformat() if job.next_run_at else None,
+            last_run_status=job.last_run_status,
+            run_count=job.run_count or 0,
+            created_at=job.created_at.isoformat() if job.created_at else "",
+        )
+
+
+@app.post("/jobs/{job_id}/pause")
+async def pause_scheduled_job(job_id: str):
+    """Pause a scheduled job."""
+    from modelguard.storage.repositories.job_repo import ScheduledJobRepository
+
+    db = get_database()
+    with db.session() as session:
+        repo = ScheduledJobRepository(session)
+        job = repo.deactivate(job_id)
+
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        return {"status": "paused", "job_id": job_id}
+
+
+@app.post("/jobs/{job_id}/resume")
+async def resume_scheduled_job(job_id: str):
+    """Resume a paused job."""
+    from modelguard.storage.repositories.job_repo import ScheduledJobRepository
+
+    db = get_database()
+    with db.session() as session:
+        repo = ScheduledJobRepository(session)
+        job = repo.activate(job_id)
+
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        return {"status": "resumed", "job_id": job_id}
+
+
+@app.post("/jobs/{job_id}/run")
+async def run_scheduled_job(job_id: str):
+    """Run a job immediately."""
+    from modelguard.monitoring.scheduler import get_scheduler
+
+    try:
+        scheduler = get_scheduler()
+        scheduler.run_job_now(job_id)
+        return {"status": "executed", "job_id": job_id}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Job execution failed: {e}")
+
+
+@app.delete("/jobs/{job_id}")
+async def delete_scheduled_job(job_id: str):
+    """Delete a scheduled job."""
+    from modelguard.storage.repositories.job_repo import ScheduledJobRepository
+
+    db = get_database()
+    with db.session() as session:
+        repo = ScheduledJobRepository(session)
+        deleted = repo.delete(job_id)
+
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        return {"status": "deleted", "job_id": job_id}

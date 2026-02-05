@@ -514,3 +514,80 @@ class AuditLogRecord(Base):
             "extra_data": self.extra_data,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class ScheduledJobRecord(Base):
+    """Scheduled monitoring jobs."""
+
+    __tablename__ = "scheduled_jobs"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+
+    # Job identification
+    name = Column(String(200), nullable=False)
+    job_type = Column(String(50), nullable=False)  # drift_check, performance_check
+
+    # Target
+    model_id = Column(String(36), ForeignKey("models.id"), nullable=False)
+    baseline_id = Column(String(36), ForeignKey("baselines.id"))
+
+    # Schedule configuration
+    schedule_type = Column(String(20), nullable=False)  # interval, cron
+    interval_minutes = Column(Integer)  # For interval type
+    cron_expression = Column(String(100))  # For cron type
+
+    # Data source
+    data_source_type = Column(String(50))  # file, database, api
+    data_source_config = Column(JSON)  # Connection details
+
+    # Status
+    is_active = Column(Boolean, default=True)
+    last_run_at = Column(DateTime)
+    next_run_at = Column(DateTime)
+    last_run_status = Column(String(20))  # success, failed, running
+    last_error = Column(Text)
+    run_count = Column(Integer, default=0)
+
+    # Notifications
+    notify_on_drift = Column(Boolean, default=True)
+    notification_config = Column(JSON)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, onupdate=datetime.utcnow)
+    created_by = Column(String(100))
+
+    # Relationships
+    model = relationship("ModelRecord")
+    baseline = relationship("BaselineRecord")
+
+    __table_args__ = (
+        Index("ix_scheduled_jobs_active", "is_active"),
+        Index("ix_scheduled_jobs_next_run", "next_run_at"),
+    )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "job_type": self.job_type,
+            "model_id": self.model_id,
+            "baseline_id": self.baseline_id,
+            "schedule_type": self.schedule_type,
+            "interval_minutes": self.interval_minutes,
+            "cron_expression": self.cron_expression,
+            "data_source_type": self.data_source_type,
+            "data_source_config": self.data_source_config,
+            "is_active": self.is_active,
+            "last_run_at": self.last_run_at.isoformat() if self.last_run_at else None,
+            "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,
+            "last_run_status": self.last_run_status,
+            "last_error": self.last_error,
+            "run_count": self.run_count,
+            "notify_on_drift": self.notify_on_drift,
+            "notification_config": self.notification_config,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_by": self.created_by,
+        }

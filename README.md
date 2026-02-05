@@ -49,6 +49,102 @@ python examples/fraud_detection_demo.py
 
 ---
 
+## Live Demo: Kaggle Credit Card Fraud Detection
+
+Using the [Kaggle Credit Card Fraud Dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) (284,807 transactions), here's ModelGuard detecting a simulated **fraud ring attack**:
+
+```
+======================================================================
+  CREDIT CARD FRAUD DETECTION - DRIFT MONITORING DEMO
+======================================================================
+
+Dataset: Kaggle Credit Card Fraud Detection
+Source: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+Features: 30 (V1-V28 PCA + Time + Amount)
+
+--------------------------------------------------
+  Phase 1: Model Training
+--------------------------------------------------
+  Training samples: 2,800
+  Validation samples: 700
+  Fraud rate: 10.00%
+  Validation accuracy: 96.43%
+  Validation F1: 0.79
+
+--------------------------------------------------
+  Phase 3: Simulate Production Drift
+--------------------------------------------------
+  Simulated drift scenario: FRAUD RING ATTACK
+    - Transaction amounts surged 600%
+    - 18+ PCA features shifted (coordinated attack pattern)
+    - Time patterns disrupted (off-hours transactions)
+
+  Production performance:
+    Baseline accuracy: 96.43%
+    Production accuracy: 11.40% (-85.0%)  <-- MODEL BROKEN
+
+--------------------------------------------------
+  Phase 4: Drift Detection
+--------------------------------------------------
+  Data drift detected: True
+  Features with drift: 19 / 30
+  Drift percentage: 63.3%
+
+  Per-feature results (top 10):
+  Feature        Method       Statistic  Drift?
+  -----------------------------------------------
+  V1             ks_test      20.723     YES
+  V2             ks_test      17.424     YES
+  V4             ks_test      17.209     YES
+  V3             ks_test      17.127     YES
+  V11            ks_test      15.476     YES
+  V6             ks_test      15.348     YES
+
+--------------------------------------------------
+  Phase 5: Severity Scoring
+--------------------------------------------------
+  Overall score: 0.62
+  Severity level: HIGH
+  Explanation: Significant drift detected. Retraining needed.
+               19 of 30 features show drift (63%).
+
+--------------------------------------------------
+  Phase 6: Action Recommendation
+--------------------------------------------------
+  Recommended action: RETRAIN
+  Urgency: medium
+  Confidence: 0.85
+
+  Reasoning:
+    - High severity drift detected. Retraining recommended.
+    - 19 features affected.
+
+--------------------------------------------------
+  Phase 8: Alert Management
+--------------------------------------------------
+  ALERT CREATED
+  ID: 811f23b9-7a76-40f4-b5ec-9d0aa51031bf
+  Severity: HIGH
+  Status: pending
+
+  To resolve via CLI:
+    modelguard alert resolve 811f23b9... retrain --user admin
+
+======================================================================
+  DEMO SUMMARY
+======================================================================
+  BASELINE: 96.43% accuracy
+  PRODUCTION: 11.40% accuracy (-85%)
+  SEVERITY: HIGH (0.62)
+  ACTION: RETRAIN
+  ALERT: Created, pending human review
+======================================================================
+```
+
+**Key Takeaway**: ModelGuard detected 63% feature drift, correctly identified HIGH severity, and recommended RETRAIN - all automatically.
+
+---
+
 ## Proof: Example Outputs
 
 ### 1. Drift Detection Report

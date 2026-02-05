@@ -1,26 +1,40 @@
 """
 Fraud Detection Model - Complete Drift Monitoring Demo
 
+Uses the Kaggle Credit Card Fraud Detection Dataset
+https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+
+Dataset: 284,807 transactions, 492 frauds (0.172%)
+Features: V1-V28 (PCA), Time, Amount
+Source: ULB Machine Learning Group
+
 This demo shows the full ModelGuard workflow:
-1. Train a fraud detection model
-2. Create baseline from training data
-3. Simulate production drift over time
-4. Detect drift with multiple methods
-5. Score severity and get recommendations
-6. Create alert for human review
-7. Demonstrate the decision workflow
+1. Load real credit card transaction data
+2. Train a fraud detection model
+3. Create baseline from training data
+4. Simulate production drift over time
+5. Detect drift with multiple methods
+6. Score severity and get recommendations
+7. Create alert for human review
 
 Run this script:
     python examples/fraud_detection_demo.py
+
+To use the real dataset:
+    1. Download from: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+    2. Place creditcard.csv in the examples/ directory
+    3. Run the demo
 """
 
+import os
 import numpy as np
 import pandas as pd
-from datetime import datetime, timedelta
-from sklearn.datasets import make_classification
+from datetime import datetime
+from pathlib import Path
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score
+from sklearn.preprocessing import StandardScaler
 
 # ModelGuard imports
 from modelguard.core.config import load_config
@@ -34,7 +48,15 @@ from modelguard.severity.scorer import SeverityScorer
 from modelguard.actions.recommender import ActionRecommender
 from modelguard.explainability.explainer import DriftExplainer
 from modelguard.human_loop.alert_manager import AlertManager
-from modelguard.core.types import Baseline, FeatureStatistics, PredictionStatistics
+
+
+# Dataset paths to check
+DATASET_PATHS = [
+    "examples/creditcard.csv",
+    "creditcard.csv",
+    "data/creditcard.csv",
+    Path.home() / "Downloads" / "creditcard.csv",
+]
 
 
 def print_header(text: str):
@@ -51,122 +73,175 @@ def print_section(text: str):
     print("-" * 50)
 
 
-def generate_fraud_data(
-    n_samples: int = 1000,
+def load_kaggle_creditcard_data(sample_size: int = 10000) -> tuple:
+    """
+    Load the Kaggle Credit Card Fraud Detection dataset.
+
+    Dataset: https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+    - 284,807 transactions made by European cardholders in September 2013
+    - 492 frauds out of 284,807 transactions (0.172%)
+    - Features V1-V28 are PCA transformed (confidential original features)
+    - Time: seconds elapsed between each transaction and first transaction
+    - Amount: transaction amount
+    - Class: 1 for fraud, 0 otherwise
+
+    Returns:
+        Tuple of (X, y, dataset_info) or None if dataset not found
+    """
+    for path in DATASET_PATHS:
+        path = Path(path)
+        if path.exists():
+            print(f"  [+] Found Kaggle dataset: {path}")
+
+            # Load the dataset
+            df = pd.read_csv(path)
+
+            # Sample if needed (full dataset is 284k rows)
+            if len(df) > sample_size:
+                # Stratified sample to maintain fraud ratio
+                fraud = df[df['Class'] == 1]
+                legit = df[df['Class'] == 0]
+
+                # Keep all frauds, sample from legitimate
+                n_fraud = len(fraud)
+                n_legit = sample_size - n_fraud
+
+                if n_legit > 0 and n_legit < len(legit):
+                    legit_sample = legit.sample(n=n_legit, random_state=42)
+                    df = pd.concat([fraud, legit_sample]).sample(frac=1, random_state=42)
+
+                print(f"  [+] Sampled {len(df):,} transactions from {284807:,}")
+
+            # Prepare features and target
+            feature_cols = [c for c in df.columns if c not in ['Class']]
+            X = df[feature_cols]
+            y = df['Class']
+
+            dataset_info = {
+                "name": "Kaggle Credit Card Fraud Detection",
+                "source": "https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud",
+                "total_transactions": 284807,
+                "total_frauds": 492,
+                "fraud_rate": 0.00172,
+                "features": feature_cols,
+                "pca_features": [f"V{i}" for i in range(1, 29)],
+                "original_features": ["Time", "Amount"],
+            }
+
+            return X, y, dataset_info
+
+    return None
+
+
+def generate_synthetic_fraud_data(
+    n_samples: int = 2000,
     fraud_rate: float = 0.1,
     random_state: int = 42,
 ) -> tuple:
     """
-    Generate synthetic fraud detection data.
-
-    Features:
-    - transaction_amount: Transaction value
-    - merchant_category: Type of merchant (encoded)
-    - time_since_last: Hours since last transaction
-    - distance_from_home: Miles from home location
-    - velocity_24h: Number of transactions in last 24h
-    - avg_amount_7d: Average transaction amount in last 7 days
-    - is_online: Whether transaction was online
-    - device_age_days: Age of device used
-    - failed_attempts: Failed transaction attempts recently
-    - account_age_months: How long account has been active
+    Generate synthetic fraud detection data (fallback when Kaggle data unavailable).
     """
     np.random.seed(random_state)
 
-    # Generate base features
     n_fraud = int(n_samples * fraud_rate)
     n_legit = n_samples - n_fraud
 
-    # Legitimate transactions
-    legit_data = {
-        'transaction_amount': np.random.lognormal(4, 1, n_legit),
-        'merchant_category': np.random.choice([0, 1, 2, 3, 4], n_legit, p=[0.3, 0.25, 0.2, 0.15, 0.1]),
-        'time_since_last': np.random.exponential(12, n_legit),
-        'distance_from_home': np.random.exponential(5, n_legit),
-        'velocity_24h': np.random.poisson(2, n_legit),
-        'avg_amount_7d': np.random.lognormal(4, 0.5, n_legit),
-        'is_online': np.random.choice([0, 1], n_legit, p=[0.6, 0.4]),
-        'device_age_days': np.random.exponential(180, n_legit),
-        'failed_attempts': np.random.poisson(0.1, n_legit),
-        'account_age_months': np.random.exponential(24, n_legit),
-    }
+    # Legitimate transactions - mimic PCA-like features
+    legit_features = np.random.randn(n_legit, 28)  # V1-V28
+    legit_time = np.random.uniform(0, 172800, n_legit)  # 2 days in seconds
+    legit_amount = np.random.lognormal(4, 1, n_legit)
 
-    # Fraudulent transactions (different patterns)
-    fraud_data = {
-        'transaction_amount': np.random.lognormal(5, 1.5, n_fraud),  # Higher amounts
-        'merchant_category': np.random.choice([0, 1, 2, 3, 4], n_fraud, p=[0.1, 0.1, 0.2, 0.3, 0.3]),
-        'time_since_last': np.random.exponential(2, n_fraud),  # Rapid transactions
-        'distance_from_home': np.random.exponential(50, n_fraud),  # Far from home
-        'velocity_24h': np.random.poisson(8, n_fraud),  # Many transactions
-        'avg_amount_7d': np.random.lognormal(4, 0.5, n_fraud),
-        'is_online': np.random.choice([0, 1], n_fraud, p=[0.3, 0.7]),  # More online
-        'device_age_days': np.random.exponential(30, n_fraud),  # New devices
-        'failed_attempts': np.random.poisson(2, n_fraud),  # More failures
-        'account_age_months': np.random.exponential(6, n_fraud),  # Newer accounts
-    }
+    # Fraudulent transactions - different patterns
+    fraud_features = np.random.randn(n_fraud, 28) * 1.5 + 0.5  # Shifted
+    fraud_time = np.random.uniform(0, 172800, n_fraud)
+    fraud_amount = np.random.lognormal(5, 1.5, n_fraud)  # Higher amounts
 
     # Combine
-    df_legit = pd.DataFrame(legit_data)
-    df_fraud = pd.DataFrame(fraud_data)
+    features = np.vstack([legit_features, fraud_features])
+    time_col = np.concatenate([legit_time, fraud_time])
+    amount_col = np.concatenate([legit_amount, fraud_amount])
+    labels = np.concatenate([np.zeros(n_legit), np.ones(n_fraud)])
 
-    df = pd.concat([df_legit, df_fraud], ignore_index=True)
-    labels = np.array([0] * n_legit + [1] * n_fraud)
+    # Create DataFrame with same structure as Kaggle data
+    feature_names = [f'V{i}' for i in range(1, 29)] + ['Time', 'Amount']
+    data = np.column_stack([features, time_col, amount_col])
+    X = pd.DataFrame(data, columns=feature_names)
+    y = pd.Series(labels, name='Class')
 
     # Shuffle
-    idx = np.random.permutation(len(df))
-    df = df.iloc[idx].reset_index(drop=True)
-    labels = labels[idx]
+    idx = np.random.permutation(len(X))
+    X = X.iloc[idx].reset_index(drop=True)
+    y = y.iloc[idx].reset_index(drop=True)
 
-    return df, labels
+    dataset_info = {
+        "name": "Synthetic Credit Card Data",
+        "source": "Generated (Kaggle format)",
+        "note": "Download real data from kaggle.com/datasets/mlg-ulb/creditcardfraud",
+        "features": feature_names,
+    }
+
+    return X, y, dataset_info
 
 
-def inject_drift(
-    df: pd.DataFrame,
-    drift_type: str = "gradual",
-    magnitude: float = 0.5,
-) -> pd.DataFrame:
+def inject_drift(df: pd.DataFrame, drift_type: str = "gradual", magnitude: float = 0.5) -> pd.DataFrame:
     """
-    Inject drift into production data.
+    Inject realistic drift into credit card transaction data.
 
-    Drift types:
-    - gradual: Slow mean shift over time
-    - sudden: Abrupt distribution change
-    - seasonal: Periodic pattern changes
+    Simulates real-world scenarios:
+    - gradual: Economic changes affecting transaction patterns
+    - sudden: Fraud ring attack or system change
+    - seasonal: Holiday shopping patterns
     """
     df = df.copy()
 
     if drift_type == "gradual":
-        # Shift means gradually
-        df['transaction_amount'] = df['transaction_amount'] * (1 + magnitude)
-        df['distance_from_home'] = df['distance_from_home'] * (1 + magnitude * 0.5)
-        df['velocity_24h'] = df['velocity_24h'] + int(magnitude * 3)
-        df['time_since_last'] = df['time_since_last'] * (1 - magnitude * 0.3)
+        # Simulate economic shift - higher transaction amounts, different patterns
+        df['Amount'] = df['Amount'] * (1 + magnitude)
+        df['V1'] = df['V1'] + magnitude * 0.5  # Shift PCA components
+        df['V2'] = df['V2'] - magnitude * 0.3
+        df['V14'] = df['V14'] * (1 + magnitude * 0.4)  # V14 often correlates with fraud
+        df['Time'] = df['Time'] * 1.2  # Time pattern shift
 
     elif drift_type == "sudden":
-        # Abrupt change in distributions
-        df['transaction_amount'] = df['transaction_amount'] * (1 + magnitude * 2)
-        df['is_online'] = np.where(df['is_online'] == 0, 1, df['is_online'])  # All online now
-        df['device_age_days'] = df['device_age_days'] * 0.3  # Much newer devices
+        # Simulate fraud ring attack - massive distribution shifts across many features
+        df['Amount'] = df['Amount'] * (1 + magnitude * 3)  # 7x higher amounts
+        df['Time'] = df['Time'] * 2.5  # Different time patterns
+        df['V1'] = df['V1'] + magnitude * 3
+        df['V2'] = df['V2'] - magnitude * 2.5
+        df['V3'] = df['V3'] - magnitude * 2.5
+        df['V4'] = df['V4'] + magnitude * 2
+        df['V5'] = df['V5'] * (1 + magnitude * 1.5)
+        df['V6'] = df['V6'] + magnitude * 2
+        df['V7'] = df['V7'] - magnitude * 1.8
+        df['V8'] = df['V8'] + magnitude * 1.5
+        df['V9'] = df['V9'] - magnitude * 1.2
+        df['V10'] = df['V10'] * (1 + magnitude)
+        df['V11'] = df['V11'] + magnitude * 2
+        df['V12'] = df['V12'] - magnitude * 1.5
+        df['V14'] = df['V14'] * (1 + magnitude * 1.5)
+        df['V16'] = df['V16'] + magnitude * 1.2
+        df['V17'] = df['V17'] * 0.2  # Dramatic shift
+        df['V19'] = df['V19'] - magnitude
 
     elif drift_type == "seasonal":
-        # Simulate holiday season (higher amounts, more velocity)
-        df['transaction_amount'] = df['transaction_amount'] * (1 + magnitude * 1.5)
-        df['velocity_24h'] = df['velocity_24h'] * 2
-        df['merchant_category'] = np.random.choice([0, 1, 2, 3, 4], len(df),
-                                                    p=[0.1, 0.15, 0.35, 0.25, 0.15])
+        # Simulate holiday shopping - higher amounts, more transactions
+        df['Amount'] = df['Amount'] * (1 + magnitude * 1.5)
+        df['V1'] = df['V1'] + np.random.normal(0, magnitude, len(df))
+        df['V2'] = df['V2'] + np.random.normal(0, magnitude, len(df))
+        df['Time'] = df['Time'] * 0.8  # Faster transaction velocity
 
     return df
 
 
 def main():
-    print_header("FRAUD DETECTION MODEL - DRIFT MONITORING DEMO")
+    print_header("CREDIT CARD FRAUD DETECTION - DRIFT MONITORING DEMO")
     print(f"Timestamp: {datetime.now().isoformat()}")
 
     # =========================================================================
-    # PHASE 1: Setup and Training
+    # PHASE 1: Load Data and Train Model
     # =========================================================================
 
-    print_section("Phase 1: Model Training")
+    print_section("Phase 1: Data Loading & Model Training")
 
     # Initialize ModelGuard
     config = load_config()
@@ -174,17 +249,39 @@ def main():
     db = get_database()
     print("  [+] ModelGuard initialized")
 
-    # Generate training data
-    X_train, y_train = generate_fraud_data(n_samples=2000, fraud_rate=0.1, random_state=42)
+    # Try to load Kaggle dataset, fall back to synthetic
+    result = load_kaggle_creditcard_data(sample_size=10000)
+
+    if result is not None:
+        X_full, y_full, dataset_info = result
+        using_real_data = True
+    else:
+        print("  [!] Kaggle dataset not found, using synthetic data")
+        print("  [!] For real data, download from:")
+        print("      https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud")
+        X_full, y_full, dataset_info = generate_synthetic_fraud_data(n_samples=5000)
+        using_real_data = False
+
+    print(f"\n  Dataset: {dataset_info['name']}")
+    if 'source' in dataset_info:
+        print(f"  Source: {dataset_info['source']}")
+
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_full, y_full, test_size=0.3, random_state=42, stratify=y_full
+    )
     X_train_split, X_val, y_train_split, y_val = train_test_split(
         X_train, y_train, test_size=0.2, random_state=42, stratify=y_train
     )
-    print(f"  [+] Training data: {len(X_train_split)} samples")
-    print(f"  [+] Validation data: {len(X_val)} samples")
-    print(f"  [+] Fraud rate: {y_train.mean():.1%}")
+
+    print(f"\n  Training samples: {len(X_train_split):,}")
+    print(f"  Validation samples: {len(X_val):,}")
+    print(f"  Test samples (for production sim): {len(X_test):,}")
+    print(f"  Fraud rate: {y_full.mean():.2%}")
+    print(f"  Features: {len(X_full.columns)} (V1-V28 PCA + Time + Amount)")
 
     # Train model
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
     model.fit(X_train_split, y_train_split)
 
     train_preds = model.predict(X_train_split)
@@ -195,9 +292,10 @@ def main():
     val_acc = accuracy_score(y_val, val_preds)
     val_f1 = f1_score(y_val, val_preds)
 
-    print(f"  [+] Training accuracy: {train_acc:.2%}")
-    print(f"  [+] Validation accuracy: {val_acc:.2%}")
-    print(f"  [+] Validation F1: {val_f1:.2f}")
+    print(f"\n  Model Performance:")
+    print(f"    Training accuracy: {train_acc:.2%}")
+    print(f"    Validation accuracy: {val_acc:.2%}")
+    print(f"    Validation F1: {val_f1:.2f}")
 
     # =========================================================================
     # PHASE 2: Register Model and Create Baseline
@@ -211,30 +309,28 @@ def main():
         baseline_repo = BaselineRepository(session)
         alert_repo = AlertRepository(session)
 
-        # Clean up any existing demo models (must delete related records first)
-        existing = model_repo.get_by_name_version("fraud_detector", "1.0.0")
+        # Clean up any existing demo models
+        existing = model_repo.get_by_name_version("creditcard_fraud_detector", "1.0.0")
         if existing:
-            # Delete alerts first
             alerts = alert_repo.list_for_model(existing.id)
             for alert in alerts:
                 alert_repo.delete(alert.id)
-            # Delete baselines
             baselines = baseline_repo.list_for_model(existing.id)
             for bl in baselines:
                 baseline_repo.delete(bl.id)
-            # Now delete the model
             model_repo.delete(existing.id)
 
         model_record = model_repo.create(
-            name="fraud_detector",
+            name="creditcard_fraud_detector",
             version="1.0.0",
             framework="sklearn",
             model_type="classification",
             feature_names=list(X_train.columns),
+            metadata={"dataset": dataset_info["name"], "source": dataset_info.get("source", "synthetic")},
         )
         model_id = model_record.id
 
-    print(f"  [+] Model registered: fraud_detector v1.0.0")
+    print(f"  [+] Model registered: creditcard_fraud_detector v1.0.0")
     print(f"  [+] Model ID: {model_id[:8]}...")
 
     # Create baseline
@@ -265,37 +361,39 @@ def main():
 
     print(f"  [+] Baseline created: {baseline_id[:8]}...")
     print(f"  [+] Features tracked: {len(baseline.feature_statistics)}")
-    print(f"  [+] Sample size: {baseline.sample_size}")
+    print(f"  [+] Baseline samples: {baseline.sample_size:,}")
 
     # =========================================================================
-    # PHASE 3: Simulate Production with Drift
+    # PHASE 3: Simulate Production Drift
     # =========================================================================
 
     print_section("Phase 3: Simulate Production Drift")
 
-    # Generate production data with drift
-    X_prod_base, y_prod = generate_fraud_data(n_samples=500, fraud_rate=0.15, random_state=99)
+    # Use test set as "production" data and inject drift
+    drift_type = "sudden"
+    drift_magnitude = 2.0  # High magnitude to trigger HIGH severity
 
-    # Inject gradual drift (simulating real-world changes)
-    X_prod = inject_drift(X_prod_base, drift_type="gradual", magnitude=0.8)
+    X_prod = inject_drift(X_test, drift_type=drift_type, magnitude=drift_magnitude)
+    y_prod = y_test
 
-    print(f"  [+] Production samples: {len(X_prod)}")
-    print(f"  [+] Drift injected: gradual (magnitude=0.8)")
-    print("\n  Drift effects:")
-    print(f"    - transaction_amount: mean +80%")
-    print(f"    - distance_from_home: mean +40%")
-    print(f"    - velocity_24h: +2-3 additional transactions")
-    print(f"    - time_since_last: mean -24%")
+    print(f"  [+] Production samples: {len(X_prod):,}")
+    print(f"  [+] Drift injected: {drift_type} (magnitude={drift_magnitude})")
 
-    # Check production model performance
+    print(f"\n  Simulated drift scenario: FRAUD RING ATTACK")
+    print(f"    - Transaction amounts surged {drift_magnitude*300:.0f}%")
+    print(f"    - 18+ PCA features shifted (coordinated attack pattern)")
+    print(f"    - Time patterns disrupted (off-hours transactions)")
+    print(f"    - This simulates a real-world fraud ring exploiting the model")
+
+    # Check model performance on drifted data
     prod_preds = model.predict(X_prod)
     prod_acc = accuracy_score(y_prod, prod_preds)
     prod_f1 = f1_score(y_prod, prod_preds)
 
     print(f"\n  Production performance:")
-    print(f"    - Baseline accuracy: {val_acc:.2%}")
-    print(f"    - Production accuracy: {prod_acc:.2%} ({(prod_acc - val_acc)*100:+.1f}%)")
-    print(f"    - Production F1: {prod_f1:.2f}")
+    print(f"    Baseline accuracy: {val_acc:.2%}")
+    print(f"    Production accuracy: {prod_acc:.2%} ({(prod_acc - val_acc)*100:+.1f}%)")
+    print(f"    Production F1: {prod_f1:.2f}")
 
     # =========================================================================
     # PHASE 4: Drift Detection
@@ -303,59 +401,30 @@ def main():
 
     print_section("Phase 4: Drift Detection")
 
-    # Reconstruct baseline object
-    with db.session() as session:
-        baseline_repo = BaselineRepository(session)
-        baseline_record = baseline_repo.get(baseline_id)
-        stored_feature_stats = dict(baseline_record.feature_statistics)
-        stored_sample_size = baseline_record.sample_size
-        stored_model_id = baseline_record.model_id
-        stored_created_at = baseline_record.created_at
-        stored_id = baseline_record.id
-
-    feature_stats = {}
-    for name, stats in stored_feature_stats.items():
-        feature_stats[name] = FeatureStatistics(
-            name=name,
-            dtype=stats.get("dtype", "numerical"),
-            count=stats.get("count", 0),
-            null_count=stats.get("null_count", 0),
-            null_ratio=stats.get("null_ratio", 0),
-            mean=stats.get("mean"),
-            std=stats.get("std"),
-            min_val=stats.get("min"),
-            max_val=stats.get("max"),
-            percentiles=stats.get("percentiles"),
-            histogram_bins=stats.get("histogram_bins"),
-            histogram_counts=stats.get("histogram_counts"),
-        )
-
-    baseline_obj = Baseline(
-        id=stored_id,
-        model_id=stored_model_id,
-        created_at=stored_created_at,
-        feature_statistics=feature_stats,
-        prediction_statistics=PredictionStatistics(prediction_type="classification"),
-        sample_size=stored_sample_size or 0,
-    )
-
-    # Run drift detection
     detector = DriftDetector(config)
-    drift_report = detector.detect(baseline_obj, X_prod)
+    drift_report = detector.detect(baseline, X_prod)
 
     print(f"  Report ID: {drift_report.id[:8]}...")
     print(f"  Data drift detected: {drift_report.data_drift_detected}")
-    print(f"  Features with drift: {len(drift_report.features_with_drift)} / {len(X_prod.columns)}")
+    print(f"  Features with drift: {len(drift_report.features_with_drift)} / {len(drift_report.feature_results)}")
     print(f"  Drift percentage: {drift_report.drift_percentage:.1f}%")
 
-    print("\n  Per-feature results:")
+    print(f"\n  Per-feature results (top 10):")
     print(f"  {'Feature':<25} {'Method':<12} {'Statistic':<10} {'Drift?':<8}")
     print(f"  {'-'*55}")
 
+    # Show top features by drift
+    feature_stats = []
     for feature_name, results in drift_report.feature_results.items():
-        for result in results[:1]:  # Show first method per feature
-            drift_marker = "YES" if result.drift_detected else "no"
-            print(f"  {feature_name:<25} {result.method_name:<12} {result.statistic:<10.3f} {drift_marker:<8}")
+        if results:
+            max_stat = max(r.statistic for r in results)
+            has_drift = any(r.drift_detected for r in results)
+            feature_stats.append((feature_name, results[0].method_name, max_stat, has_drift))
+
+    feature_stats.sort(key=lambda x: x[2], reverse=True)
+    for feat, method, stat, drift in feature_stats[:10]:
+        drift_str = "YES" if drift else "no"
+        print(f"  {feat:<25} {method:<12} {stat:<10.3f} {drift_str:<8}")
 
     # =========================================================================
     # PHASE 5: Severity Scoring
@@ -365,19 +434,24 @@ def main():
 
     scorer = SeverityScorer(config)
     severity = scorer.score_report(drift_report)
-    drift_report.severity = severity
 
     print(f"  Overall score: {severity.overall_score:.2f}")
     print(f"  Severity level: {severity.level.value.upper()}")
     print(f"  Confidence: {severity.confidence:.2f}")
     print(f"  Impacts predictions: {severity.impacts_predictions}")
+
     print(f"\n  Explanation:")
     print(f"    {severity.explanation}")
 
-    print("\n  Feature severity scores:")
-    sorted_features = sorted(severity.feature_scores.items(), key=lambda x: x[1], reverse=True)
-    for feature, score in sorted_features[:5]:
-        print(f"    {feature}: {score:.2f}")
+    # Show feature severity scores
+    print(f"\n  Top feature severity scores:")
+    sorted_features = sorted(
+        severity.feature_scores.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:5]
+    for feat, score in sorted_features:
+        print(f"    {feat}: {score:.2f}")
 
     # =========================================================================
     # PHASE 6: Action Recommendation
@@ -387,24 +461,23 @@ def main():
 
     recommender = ActionRecommender(config)
     recommendation = recommender.recommend(severity)
-    drift_report.recommendation = recommendation
 
     print(f"  Recommended action: {recommendation.action.value.upper()}")
     print(f"  Urgency: {recommendation.urgency.value}")
     print(f"  Confidence: {recommendation.confidence:.2f}")
     print(f"  Estimated impact: {recommendation.estimated_impact}")
 
-    print("\n  Reasoning:")
-    for reason in recommendation.reasoning:
+    print(f"\n  Reasoning:")
+    for reason in recommendation.reasoning[:3]:
         print(f"    - {reason}")
 
     if recommendation.prerequisite_actions:
-        print("\n  Prerequisite actions:")
+        print(f"\n  Prerequisite actions:")
         for action in recommendation.prerequisite_actions:
             print(f"    - {action}")
 
     # =========================================================================
-    # PHASE 7: Generate Explanation
+    # PHASE 7: Drift Explanation
     # =========================================================================
 
     print_section("Phase 7: Drift Explanation")
@@ -432,6 +505,7 @@ def main():
     print_section("Phase 8: Alert Management")
 
     alert_manager = AlertManager(config)
+    alert_created = False
 
     if alert_manager.should_create_alert(severity, recommendation):
         alert = alert_manager.create_alert(
@@ -463,6 +537,7 @@ def main():
             )
             alert_id = alert_record.id
 
+        alert_created = True
         print(f"  ALERT CREATED")
         print(f"  -----------------------------------------")
         print(f"  ID: {alert_id}")
@@ -473,7 +548,7 @@ def main():
         print(f"\n  To resolve via CLI:")
         print(f"    modelguard alert resolve {alert_id[:8]}... retrain --user admin")
     else:
-        print("  No alert needed - drift level is acceptable.")
+        print("  No alert needed - drift within acceptable thresholds")
 
     # =========================================================================
     # SUMMARY
@@ -481,19 +556,22 @@ def main():
 
     print_header("DEMO SUMMARY")
 
+    dataset_label = "Kaggle Credit Card Fraud" if using_real_data else "Synthetic (Kaggle format)"
+
     print(f"""
-  Model: fraud_detector v1.0.0
+  Dataset: {dataset_label}
+  Model: creditcard_fraud_detector v1.0.0
   ---------------------------------------------------------
 
-  BASELINE (Training)
-    Samples: {baseline.sample_size}
+  BASELINE (Training Data)
+    Samples: {baseline.sample_size:,}
     Accuracy: {val_acc:.2%}
     F1 Score: {val_f1:.2f}
 
-  PRODUCTION (With Drift)
-    Samples: {len(X_prod)}
+  PRODUCTION (With Simulated Drift)
+    Samples: {len(X_prod):,}
     Accuracy: {prod_acc:.2%} ({(prod_acc - val_acc)*100:+.1f}%)
-    Drift detected: {drift_report.drift_percentage:.1f}% of features
+    Features drifted: {drift_report.drift_percentage:.0f}%
 
   ASSESSMENT
     Severity: {severity.level.value.upper()} ({severity.overall_score:.2f})
@@ -501,20 +579,36 @@ def main():
     Urgency: {recommendation.urgency.value}
 
   OUTCOME
-    Alert created: Yes
-    Status: Pending human review
+    Alert created: {"Yes" if alert_created else "No"}
+    Status: {"Pending human review" if alert_created else "Within acceptable thresholds"}
 
   ---------------------------------------------------------
 
-  The model has detected significant drift in production data.
-  Key features affected: {', '.join(drift_report.features_with_drift[:3])}
+  Key findings:
+  - Drift detected in {len(drift_report.features_with_drift)} features
+  - Most affected: {', '.join(drift_report.features_with_drift[:3])}
+  - Model accuracy dropped {abs(prod_acc - val_acc)*100:.1f}%
 
   Recommended next steps:
   1. Review the alert and drifting features
   2. Investigate data pipeline for changes
   3. Consider retraining with recent data
   4. Monitor post-retrain performance
-    """)
+""")
+
+    if not using_real_data:
+        print(f"""
+  ---------------------------------------------------------
+  NOTE: Running with synthetic data. For real-world demo:
+
+  1. Download the Kaggle Credit Card Fraud dataset:
+     https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+
+  2. Place creditcard.csv in examples/ directory
+
+  3. Re-run the demo
+  ---------------------------------------------------------
+""")
 
 
 if __name__ == "__main__":

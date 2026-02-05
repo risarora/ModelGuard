@@ -277,7 +277,7 @@ def main():
     print(f"\n  Training samples: {len(X_train_split):,}")
     print(f"  Validation samples: {len(X_val):,}")
     print(f"  Test samples (for production sim): {len(X_test):,}")
-    print(f"  Fraud rate: {y_full.mean():.2%}")
+    print(f"  Fraud rate: {y_full.mean():.2%} (balanced resample; original Kaggle is 0.17%)")
     print(f"  Features: {len(X_full.columns)} (V1-V28 PCA + Time + Amount)")
 
     # Train model
@@ -293,9 +293,8 @@ def main():
     val_f1 = f1_score(y_val, val_preds)
 
     print(f"\n  Model Performance:")
-    print(f"    Training accuracy: {train_acc:.2%}")
-    print(f"    Validation accuracy: {val_acc:.2%}")
-    print(f"    Validation F1: {val_f1:.2f}")
+    print(f"    Validation F1 (fraud class): {val_f1:.2f}")
+    print(f"    Validation accuracy: {val_acc:.2%} (less meaningful for imbalanced data)")
 
     # =========================================================================
     # PHASE 2: Register Model and Create Baseline
@@ -390,10 +389,10 @@ def main():
     prod_acc = accuracy_score(y_prod, prod_preds)
     prod_f1 = f1_score(y_prod, prod_preds)
 
-    print(f"\n  Production performance:")
-    print(f"    Baseline accuracy: {val_acc:.2%}")
-    print(f"    Production accuracy: {prod_acc:.2%} ({(prod_acc - val_acc)*100:+.1f}%)")
-    print(f"    Production F1: {prod_f1:.2f}")
+    print(f"\n  Production performance (F1 = fraud detection quality):")
+    print(f"    Baseline F1: {val_f1:.2f}")
+    print(f"    Production F1: {prod_f1:.2f} ({(prod_f1 - val_f1)*100:+.1f}%)")
+    print(f"    (Accuracy: {prod_acc:.2%} - not ideal for imbalanced data)")
 
     # =========================================================================
     # PHASE 4: Drift Detection
@@ -558,19 +557,22 @@ def main():
 
     dataset_label = "Kaggle Credit Card Fraud" if using_real_data else "Synthetic (Kaggle format)"
 
+    f1_drop = val_f1 - prod_f1
+    f1_drop_pct = (f1_drop / val_f1 * 100) if val_f1 > 0 else 0
+
     print(f"""
   Dataset: {dataset_label}
+  Note: Balanced resample (10% fraud rate) for demo. Original Kaggle is 0.17%.
   Model: creditcard_fraud_detector v1.0.0
   ---------------------------------------------------------
 
   BASELINE (Training Data)
     Samples: {baseline.sample_size:,}
-    Accuracy: {val_acc:.2%}
-    F1 Score: {val_f1:.2f}
+    F1 (fraud class): {val_f1:.2f}
 
   PRODUCTION (With Simulated Drift)
     Samples: {len(X_prod):,}
-    Accuracy: {prod_acc:.2%} ({(prod_acc - val_acc)*100:+.1f}%)
+    F1 (fraud class): {prod_f1:.2f} ({-f1_drop_pct:.0f}%)
     Features drifted: {drift_report.drift_percentage:.0f}%
 
   ASSESSMENT
@@ -587,7 +589,7 @@ def main():
   Key findings:
   - Drift detected in {len(drift_report.features_with_drift)} features
   - Most affected: {', '.join(drift_report.features_with_drift[:3])}
-  - Model accuracy dropped {abs(prod_acc - val_acc)*100:.1f}%
+  - F1 score dropped {f1_drop_pct:.0f}% (fraud detection degraded)
 
   Recommended next steps:
   1. Review the alert and drifting features

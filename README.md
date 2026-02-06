@@ -40,6 +40,7 @@ python examples/fraud_detection_demo.py
 Uses synthetic data based on the [Kaggle Credit Card Fraud dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud). We inject fake drift (simulate a fraud ring attack) and watch the system catch it.
 
 Output:
+
 ```
 Features drifted:  19 / 30 (63%)
 Severity:          HIGH
@@ -96,12 +97,12 @@ modelguard alert resolve <alert-id> retrain --user yourname
 
 ## The drift tests
 
-| Test | Use for | What it catches |
-|------|---------|-----------------|
-| KS test | Continuous features | Any shape change |
-| Chi-square | Categorical features | Frequency changes |
-| PSI | Both | Industry standard, good for binned data |
-| Wasserstein | Continuous | How far distributions moved |
+| Test        | Use for              | What it catches                         |
+| ----------- | -------------------- | --------------------------------------- |
+| KS test     | Continuous features  | Any shape change                        |
+| Chi-square  | Categorical features | Frequency changes                       |
+| PSI         | Both                 | Industry standard, good for binned data |
+| Wasserstein | Continuous           | How far distributions moved             |
 
 We run KS by default. PSI if you want industry-standard reporting. The others are there if you need them.
 
@@ -115,6 +116,7 @@ score = 0.4 * (% features drifted)
 ```
 
 Thresholds:
+
 - **LOW** (0.1-0.3): Keep an eye on it
 - **MEDIUM** (0.3-0.5): Investigate soon
 - **HIGH** (0.5-0.8): Probably need to retrain
@@ -190,6 +192,7 @@ Because ML is Python. If you need a REST API, `modelguard server start` gives yo
 ## Contributing
 
 Open an issue first. PRs welcome for:
+
 - Bug fixes
 - New drift detection methods
 - Better documentation
@@ -198,3 +201,73 @@ Open an issue first. PRs welcome for:
 ## License
 
 MIT
+
+---
+
+# My fraud model didn’t crash it quietly dropped from F1 0.79 → 0.18. Here’s how I caught it.
+
+MLOps Education
+emoji:snoo_hearteyes:
+I had a fraud detection demo where nothing “broke” in production.
+
+No errors, no crashes, no deploys.
+
+But the model’s F1 score quietly dropped from 0.79 to 0.18 — purely due to data drift.
+
+That’s what scares me most about production ML: models don’t fail loudly,
+
+they slowly start lying.
+
+To explore this properly, I built ModelGuard — a small reference implementation
+
+focused on what happens _after_ deployment:
+
+- detects data & prediction drift using multiple statistical tests
+- scores severity (not just yes/no drift)
+- recommends actions (ignore / monitor / retrain / rollback)
+- gates retraining with human approval
+- exposes everything via a CLI + lightweight REST API
+
+This is intentionally not a framework or SaaS — just a learning artifact for
+
+applied ML / MLOps.
+
+The demo uses the Kaggle credit card fraud dataset with a simulated fraud-ring
+
+attack. The original dataset is extremely imbalanced (0.17% fraud), so I use
+
+balanced resampling for faster iteration. Drift is synthetically injected, but
+
+all drift statistics and severity scores are real calculations.
+
+In the demo, ModelGuard:
+
+- detects drift in 19 / 30 features (63%)
+- assigns HIGH severity (0.62)
+- flags a 77% drop in fraud-class F1
+- recommends retraining and creates a pending alert for human review
+
+Repo: https://github.com/Aagam-Bothara/ModelGuard
+
+I’d really appreciate feedback from folks running models in prod:
+– does this feel realistic or over-engineered?
+– what would you simplify or remove?
+– what’s the first thing you’d add?
+
+---
+
+The fact that you used AI instead of putting in a modicum of effort is telling.
+
+It is over-engineered. You have not quantified the impact your tool has over simple passive drift detection. How are you measuring the value add? It’s a lot of features that are superfluous since teams review the CI/CD regularly
+
+I would remove most of the features. You used a toy dataset which is not that interesting from a production standpoint.
+
+I wouldn’t add anything. Before writing a single line of code I would ask what the common pain points are for MLOps teams, difficulties in scaling team productivity (not services) and only go from there.
+
+Active monitoring is a common MLOps pattern that is implemented by hundreds of teams across the industry. AWS has most of these tools in Sagemaker and various complimentary services. It also isn’t hard to roll your own drift detection.
+
+You also said “this is what scares me most about ML production models…”
+
+You fail to realize this is not a rational fear that competent team leads have. This is something someone who is woefully inexperienced and ignorant of how MLOps teams operate would say.
+
+TLDR: stop being lazy. Write your own posts and stop outsourcing thinking to a glorified parrot. Then actually strongly reevaluate how you approach software design.
